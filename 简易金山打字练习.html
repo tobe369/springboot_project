@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>简易金山打字练习</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #1e1e1e;
+            font-family: 'Courier New', Courier, monospace;
+            color: white;
+            user-select: none; /* 禁止选中文字 */
+        }
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        /* 顶部信息栏 */
+        .ui-bar {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            padding: 15px;
+            display: flex;
+            justify-content: space-between;
+            box-sizing: border-box;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 10;
+            font-size: 20px;
+            font-weight: bold;
+        }
+
+        .stat-box span {
+            color: #00ffcc;
+        }
+
+        /* 下落的单词样式 */
+        .word {
+            position: absolute;
+            font-size: 24px;
+            font-weight: bold;
+            color: #ffffff;
+            transition: transform 0.1s;
+            white-space: nowrap;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+        }
+
+        /* 已经输入正确的字符 */
+        .highlight {
+            color: #00ff00; /* 绿色 */
+        }
+
+        /* 当前锁定的单词 */
+        .active-target {
+            border-bottom: 3px solid #ff0055;
+            transform: scale(1.2);
+            z-index: 5;
+        }
+
+        /* 游戏结束/开始 遮罩层 */
+        #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 20;
+        }
+
+        h1 {
+            font-size: 48px;
+            margin-bottom: 10px;
+            color: #00ffcc;
+            text-shadow: 0 0 10px #00ffcc;
+        }
+
+        button {
+            padding: 15px 40px;
+            font-size: 24px;
+            background: #ff0055;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background 0.3s;
+            font-family: inherit;
+        }
+
+        button:hover {
+            background: #ff3377;
+        }
+
+        p {
+            color: #aaa;
+            font-size: 18px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <div class="ui-bar">
+            <div class="stat-box">得分: <span id="score">0</span></div>
+            <div class="stat-box">难度: <span id="level">1</span></div>
+            <div class="stat-box">生命: <span id="lives">5</span></div>
+        </div>
+
+        <div id="word-area"></div>
+
+        <div id="overlay">
+            <h1 id="title-text">打字练习游戏</h1>
+            <p id="final-score" style="display:none;">最终得分: 0</p>
+            <br>
+            <button onclick="startGame()" id="start-btn">开始游戏</button>
+        </div>
+    </div>
+
+    <script>
+        // === 游戏配置与状态 ===
+        const wordsList = [
+            "hello", "world", "code", "javascript", "html", "css", "react", "vue",
+            "python", "java", "linux", "window", "apple", "banana", "orange",
+            "keyboard", "monitor", "mouse", "screen", "network", "server",
+            "database", "algorithm", "function", "variable", "constant", "array",
+            "object", "class", "interface", "promise", "async", "await", "import",
+            "export", "module", "browser", "chrome", "firefox", "safari"
+        ];
+
+        const gameState = {
+            isPlaying: false,
+            score: 0,
+            lives: 5,
+            level: 1,
+            spawnRate: 2000, // 毫秒
+            fallSpeed: 1.5,  // 像素/帧
+            activeWords: [], // 当前屏幕上的单词对象数组
+            targetWordIndex: null, // 当前正在输入的单词在 activeWords 中的索引
+            animationFrameId: null,
+            spawnTimeoutId: null
+        };
+
+        // DOM 元素
+        const wordArea = document.getElementById('word-area');
+        const scoreEl = document.getElementById('score');
+        const livesEl = document.getElementById('lives');
+        const levelEl = document.getElementById('level');
+        const overlay = document.getElementById('overlay');
+        const titleText = document.getElementById('title-text');
+        const startBtn = document.getElementById('start-btn');
+        const finalScoreEl = document.getElementById('final-score');
+
+        // === 游戏逻辑 ===
+
+        function startGame() {
+            // 重置状态
+            gameState.isPlaying = true;
+            gameState.score = 0;
+            gameState.lives = 5;
+            gameState.level = 1;
+            gameState.spawnRate = 2000;
+            gameState.fallSpeed = 1.5;
+            gameState.activeWords = [];
+            gameState.targetWordIndex = null;
+
+            // 清空屏幕
+            wordArea.innerHTML = '';
+            updateUI();
+            
+            // 隐藏遮罩
+            overlay.style.display = 'none';
+            finalScoreEl.style.display = 'none';
+            startBtn.innerText = "重新开始";
+
+            // 启动循环
+            gameLoop();
+            spawnWordLoop();
+        }
+
+        function gameOver() {
+            gameState.isPlaying = false;
+            cancelAnimationFrame(gameState.animationFrameId);
+            clearTimeout(gameState.spawnTimeoutId);
+
+            titleText.innerText = "游戏结束";
+            finalScoreEl.innerText = `最终得分: ${gameState.score}`;
+            finalScoreEl.style.display = 'block';
+            overlay.style.display = 'flex';
+        }
+
+        // 生成单词
+        function spawnWordLoop() {
+            if (!gameState.isPlaying) return;
+
+            createWord();
+
+            // 随着等级提高，生成速度变快，最低 800ms
+            let nextSpawnTime = Math.max(800, 2000 - (gameState.level * 100));
+            gameState.spawnTimeoutId = setTimeout(spawnWordLoop, nextSpawnTime);
+        }
+
+        function createWord() {
+            const text = wordsList[Math.floor(Math.random() * wordsList.length)];
+            const x = Math.random() * (window.innerWidth - 150) + 20; // 随机X坐标，防止超出屏幕
+
+            const wordEl = document.createElement('div');
+            wordEl.className = 'word';
+            wordEl.style.left = `${x}px`;
+            wordEl.style.top = `-50px`; // 从屏幕上方开始
+            
+            // 渲染初始文本
+            wordEl.innerHTML = text;
+
+            wordArea.appendChild(wordEl);
+
+            gameState.activeWords.push({
+                text: text,
+                remainingText: text, // 剩余未输入的字符
+                element: wordEl,
+                y: -50,
+                matchedCount: 0 // 已经匹配了多少个字符
+            });
+        }
+
+        // 主游戏循环（动画帧）
+        function gameLoop() {
+            if (!gameState.isPlaying) return;
+
+            // 移动单词
+            gameState.activeWords.forEach((wordObj, index) => {
+                wordObj.y += gameState.fallSpeed;
+                wordObj.element.style.top = `${wordObj.y}px`;
+
+                // 检查是否触底
+                if (wordObj.y > window.innerHeight) {
+                    handleMiss(index);
+                }
+            });
+
+            gameState.animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        // 处理单词触底
+        function handleMiss(index) {
+            const wordObj = gameState.activeWords[index];
+            // 如果是当前锁定的单词触底了，解锁
+            if (gameState.targetWordIndex === index) {
+                gameState.targetWordIndex = null;
+            } else if (gameState.targetWordIndex > index) {
+                // 如果删除的单词在当前锁定单词之前，索引需要减1
+                gameState.targetWordIndex--;
+            }
+
+            // 移除DOM
+            if (wordObj.element.parentNode) {
+                wordObj.element.parentNode.removeChild(wordObj.element);
+            }
+            gameState.activeWords.splice(index, 1);
+
+            // 扣血
+            gameState.lives--;
+            updateUI();
+
+            // 闪烁红色背景警告
+            document.body.style.backgroundColor = '#550000';
+            setTimeout(() => document.body.style.backgroundColor = '#1e1e1e', 100);
+
+            if (gameState.lives <= 0) {
+                gameOver();
+            }
+        }
+
+        // 键盘输入监听
+        document.addEventListener('keydown', (e) => {
+            if (!gameState.isPlaying) return;
+
+            const key = e.key.toLowerCase();
+            
+            // 仅处理字母输入
+            if (!/^[a-z]$/.test(key)) return;
+
+            // 1. 如果当前没有锁定单词，寻找匹配首字母的单词
+            if (gameState.targetWordIndex === null) {
+                // 优先找屏幕最下方的单词（Y坐标最大），增加紧迫感
+                // 这里为了简化，我们找 activeWords 里的第一个匹配项
+                // 你可以通过排序 activeWords 来优化优先级
+                
+                for (let i = 0; i < gameState.activeWords.length; i++) {
+                    if (gameState.activeWords[i].remainingText.startsWith(key)) {
+                        lockTarget(i);
+                        processInput(key);
+                        return; // 找到一个就退出，防止一次按键消除多个单词
+                    }
+                }
+            } else {
+                // 2. 已经有锁定的单词，检查输入是否匹配
+                const targetObj = gameState.activeWords[gameState.targetWordIndex];
+                
+                // 防御性编程：防止target索引越界（虽然handleMiss处理了，但以防万一）
+                if (!targetObj) {
+                    gameState.targetWordIndex = null;
+                    return;
+                }
+
+                if (targetObj.remainingText.startsWith(key)) {
+                    processInput(key);
+                } else {
+                    // 输错了：可选 - 播放错误音效或震动
+                }
+            }
+        });
+
+        function lockTarget(index) {
+            gameState.targetWordIndex = index;
+            const wordObj = gameState.activeWords[index];
+            wordObj.element.classList.add('active-target');
+        }
+
+        function processInput(key) {
+            const wordObj = gameState.activeWords[gameState.targetWordIndex];
+            
+            // 更新逻辑
+            wordObj.matchedCount++;
+            wordObj.remainingText = wordObj.remainingText.substring(1);
+
+            // 更新视觉效果：高亮已输入部分
+            const fullText = wordObj.text;
+            const typedPart = fullText.substring(0, wordObj.matchedCount);
+            const untypedPart = fullText.substring(wordObj.matchedCount);
+            
+            wordObj.element.innerHTML = `<span class="highlight">${typedPart}</span>${untypedPart}`;
+
+            // 检查单词是否完成
+            if (wordObj.remainingText.length === 0) {
+                wordCompleted();
+            }
+        }
+
+        function wordCompleted() {
+            const wordObj = gameState.activeWords[gameState.targetWordIndex];
+            
+            // 移除DOM
+            if (wordObj.element.parentNode) {
+                wordObj.element.parentNode.removeChild(wordObj.element);
+            }
+            
+            // 从数组移除
+            gameState.activeWords.splice(gameState.targetWordIndex, 1);
+            
+            // 重置锁定
+            gameState.targetWordIndex = null;
+
+            // 加分
+            gameState.score += 10;
+            
+            // 难度升级逻辑
+            if (gameState.score % 50 === 0) {
+                gameState.level++;
+                gameState.fallSpeed += 0.2;
+            }
+
+            updateUI();
+        }
+
+        function updateUI() {
+            scoreEl.innerText = gameState.score;
+            livesEl.innerText = gameState.lives;
+            levelEl.innerText = gameState.level;
+        }
+
+    </script>
+</body>
+</html>
